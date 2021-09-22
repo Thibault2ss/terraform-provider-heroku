@@ -142,6 +142,7 @@ The following arguments are supported:
     `SHA256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
   * `path` - (Required unless `source.url` is set) Local path to the source directory or tarball archive for the app
   * `url` - (Required unless `source.path` is set) `https` location of the source archive for the app
+  * `headers` - (To be used with `source.url`) Http headers to use in the tarball download specified with the url
   * `version` - Use to track what version of your source originated this build. If you are creating builds
     from git-versioned source code, for example, the commit hash, or release tag would be a good value to use for the
     version parameter.
