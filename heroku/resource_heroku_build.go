@@ -92,6 +92,12 @@ func resourceHerokuBuild() *schema.Resource {
 							ValidateFunc: validateSourceUrl,
 						},
 
+						"headers": {
+							Type:     schema.TypeMap,
+							Optional: true,
+							ForceNew: true,
+						},
+
 						"version": {
 							Type:     schema.TypeString,
 							Optional: true,
@@ -253,8 +259,44 @@ func resourceHerokuBuildCreate(d *schema.ResourceData, meta interface{}) error {
 					opts.SourceBlob.Checksum = &checksum
 				}
 			} else if v, ok = sourceArg["url"]; ok && v != "" {
+				headers := make(map[string]string)
+
+				if h, ok := sourceArg["headers"]; ok {
+					for k, v := range h.(map[string]interface{}) {
+						headers[k] = v.(string)
+					}
+				}
+
 				s := v.(string)
-				opts.SourceBlob.URL = &s
+
+				if len(headers) > 0 {
+					tarballPath, err := downloadTarball(s, headers)
+
+					if err != nil {
+						return fmt.Errorf("Error downloading tarball with url %s and headers %s: %s", s, headers, err)
+					}
+
+					defer cleanupSourceFile(tarballPath)
+
+					checksum, err = checksumSource(tarballPath)
+					if err != nil {
+						return fmt.Errorf("Error calculating checksum for tarball source %s: %s", tarballPath, err)
+					}
+
+					newSource, err := client.SourceCreate(context.TODO())
+					if err != nil {
+						return fmt.Errorf("Error creating source for build: %s", err)
+					}
+					err = uploadSource(tarballPath, "PUT", newSource.SourceBlob.PutURL)
+					if err != nil {
+						return fmt.Errorf("Error uploading source for build to %s: %s", newSource.SourceBlob.PutURL, err)
+					}
+					opts.SourceBlob.URL = &newSource.SourceBlob.GetURL
+
+				} else {
+					opts.SourceBlob.URL = &s
+				}
+
 			} else {
 				return fmt.Errorf("Build requires either source.path or source.url")
 			}
@@ -582,6 +624,35 @@ func generateSourceTarball(path string) (string, error) {
 	if err = tarinator.Tarinate([]string{path}, tf); err != nil {
 		err = fmt.Errorf("Error generating build source tarball %s of %s: %s", tf, path, err)
 	}
+	return tf, err
+}
+
+func downloadTarball(url string, headers map[string]string) (string, error) {
+	fi, err := ioutil.TempFile("", "terraform-heroku_build-source-*.tar.gz")
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	for key, value := range headers {
+		req.Header.Add(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	_, err = io.Copy(fi, resp.Body)
+	tf := fi.Name()
+
 	return tf, err
 }
 
